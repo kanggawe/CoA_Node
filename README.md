@@ -99,6 +99,21 @@ Content-Type: application/json
   }
   ```
 
+### 4. Custom Attributes (Mendukung ppp, login, dhcp, hotspot, dll.)
+* **Endpoint**: `POST /api/coa/custom`
+* **JSON Body**:
+  ```json
+  {
+    "username": "budi_pppoe",
+    "nas_ip": "192.168.88.1",
+    "secret": "mikrotik_coa_secret",
+    "attributes": {
+      "Session-Timeout": "7200",
+      "Mikrotik-Rate-Limit": "10M/10M"
+    }
+  }
+  ```
+
 ---
 
 ## 📖 Dokumentasi Lengkap

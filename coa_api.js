@@ -46,7 +46,7 @@ function validateBasicRequest(req, res) {
 
 // Helper untuk sanitasi input
 function sanitize(input) {
-  if (!input) return "";
+  if (input === undefined || input === null) return "";
   return String(input).replace(/[`"'$()&;|<>]/g, "");
 }
 
@@ -187,6 +187,62 @@ app.post("/api/coa/isolate", (req, res) => {
       return res.status(400).json({
         status: "error",
         message: "Gagal memasukkan user ke address list (CoA-NAK atau Timeout).",
+        log: logOutput,
+      });
+    }
+  });
+});
+
+// ----------------------------------------------------
+// 4. ENDPOINT: Custom RADIUS Attributes (Tipe: coa)
+//    Mendukung ppp, login (console/ssh), hotspot, dhcp, dll.
+// ----------------------------------------------------
+app.post("/api/coa/custom", (req, res) => {
+  if (!validateBasicRequest(req, res)) return;
+
+  const { username, nas_ip, secret, attributes } = req.body;
+  if (!username || !nas_ip || !secret || !attributes || typeof attributes !== "object") {
+    return res.status(400).json({
+      status: "error",
+      message: "Gagal, butuh variabel: username, nas_ip, secret, dan object attributes.",
+    });
+  }
+
+  if (!isValidIp(nas_ip)) {
+    return res.status(400).json({ status: "error", message: "Format NAS IP tidak valid." });
+  }
+
+  const cleanUsername = sanitize(username);
+  const cleanSecret = sanitize(secret);
+  const nasTarget = `${nas_ip}:3799`;
+
+  // Susun payload attribute RADIUS dinamis & aman dari Command Injection
+  const attrStrings = [`User-Name=${cleanUsername}`];
+  for (const [key, val] of Object.entries(attributes)) {
+    const cleanKey = sanitize(key);
+    const cleanVal = sanitize(val);
+    if (cleanKey && cleanVal !== "") {
+      attrStrings.push(`${cleanKey}=${cleanVal}`);
+    }
+  }
+  const attrPayload = attrStrings.join(", ");
+
+  const cmd = `echo "${attrPayload}" | radclient -x -r 1 -t 3 ${nasTarget} coa '${cleanSecret}' 2>&1`;
+
+  exec(cmd, (error, stdout, stderr) => {
+    const outputText = stdout || stderr || "";
+    const logOutput = outputText.split("\n").filter((line) => line.trim() !== "");
+
+    if (outputText.includes("CoA-ACK")) {
+      return res.status(200).json({
+        status: "success",
+        message: "Berhasil: Atribut custom CoA berhasil dikirim ke MikroTik.",
+        log: logOutput,
+      });
+    } else {
+      return res.status(400).json({
+        status: "error",
+        message: "Gagal mengirim atribut custom CoA (CoA-NAK atau Timeout).",
         log: logOutput,
       });
     }

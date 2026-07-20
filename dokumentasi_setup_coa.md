@@ -126,6 +126,33 @@ Memasukkan IP pengguna ke dalam kelompok *Address List* tertentu di firewall Mik
 
 ---
 
+### 4. Custom RADIUS Attributes (Mendukung Semua Service)
+Endpoint ini digunakan untuk mengirim atribut RADIUS secara fleksibel. Berguna untuk mengontrol service apa pun yang dicentang pada konfigurasi RADIUS di MikroTik Anda (seperti **ppp / PPPoE**, **login**, **hotspot**, **dhcp**, **wireless**, **ipsec**, dll).
+* **Endpoint**: `POST /api/coa/custom`
+* **Payload (JSON)**:
+  ```json
+  {
+    "username": "budi_pppoe",
+    "nas_ip": "192.168.88.1",
+    "secret": "mikrotik_coa_secret",
+    "attributes": {
+      "Session-Timeout": "7200",
+      "Acct-Interim-Interval": "60",
+      "Mikrotik-Rate-Limit": "10M/10M"
+    }
+  }
+  ```
+* **Response Sukses (200 OK)**:
+  ```json
+  {
+    "status": "success",
+    "message": "Berhasil: Atribut custom CoA berhasil dikirim ke MikroTik.",
+    "log": [ ... ]
+  }
+  ```
+
+---
+
 ## 🛠️ Langkah Penerapan Perubahan di Server
 
 Apabila Anda melakukan perubahan kode di server, pastikan untuk memuat ulang (reload) proses PM2 agar kode baru diterapkan:

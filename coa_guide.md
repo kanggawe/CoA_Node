@@ -185,6 +185,21 @@ pm2 save
   }
   ```
 
+### 4. Endpoint: Custom RADIUS Attributes (Mendukung ppp, login, hotspot, dhcp, dll.)
+* **URL**: `http://IP_SERVER:3000/api/coa/custom`
+* **JSON Body**:
+  ```json
+  {
+    "username": "budi_pppoe",
+    "nas_ip": "192.168.88.1",
+    "secret": "mikrotik_coa_secret",
+    "attributes": {
+      "Session-Timeout": "7200",
+      "Mikrotik-Rate-Limit": "10M/10M"
+    }
+  }
+  ```
+
 ---
 
 ## 🛑 Troubleshooting Port & Firewall
