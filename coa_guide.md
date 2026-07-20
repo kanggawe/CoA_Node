@@ -1,6 +1,6 @@
 # Panduan Lengkap Setup CoA (Change of Authorization) dari Awal
 
-Panduan ini menjelaskan alur konfigurasi CoA dari hulu ke hilir untuk memutus (*kick*) atau merubah *session* user PPPoE / Hotspot secara *real-time* dari aplikasi web (seperti Laravel) ke **MikroTik NAS** melalui **FreeRADIUS Server** menggunakan **Node.js API Gateway**.
+Panduan ini menjelaskan alur konfigurasi CoA dari hulu ke hilir untuk memutus (*kick*), merubah bandwidth (*rate limit*), atau mengisolasi (*address list*) *session* user PPPoE / Hotspot secara *real-time* dari aplikasi web (seperti Laravel) ke **MikroTik NAS** melalui **FreeRADIUS Server** menggunakan **Node.js API Gateway** (mendukung reverse proxy **Nginx** dan **Apache**).
 
 ---
 
@@ -9,16 +9,16 @@ Panduan ini menjelaskan alur konfigurasi CoA dari hulu ke hilir untuk memutus (*
 ```
 +------------------------+      POST /api/coa/disconnect      +--------------------------+
 |  Laravel / Web App     | ---------------------------------> | Node.js Gateway (P.3000) |
-+------------------------+                                    +--------------------------+
-                                                                            |
-                                                                            | Exec radclient
-                                                                            v
++------------------------+      POST /api/coa/rate-limit      +--------------------------+
+                                POST /api/coa/isolate                     |
+                                                                          | Exec radclient
+                                                                          v
 +------------------------+           UDP Port 3799            +--------------------------+
 |  MikroTik RouterOS     | <--------------------------------- |    Linux radclient command|
 +------------------------+                                    +--------------------------+
             |
             v
-   [ Kick User Session ]
+   [ Apply CoA Changes ]
 ```
 
 ---
@@ -66,7 +66,7 @@ Pastikan MikroTik terdaftar sebagai client di FreeRADIUS agar paket CoA yang dik
 
 ## 3. Setup Node.js API Gateway (`coa_api.js`)
 
-Node.js bertindak sebagai jembatan/middleware aman agar aplikasi eksternal (seperti Laravel) dapat memicu pemutusan user tanpa harus membuka akses SSH/Terminal Linux ke publik.
+Node.js bertindak sebagai jembatan/middleware aman agar aplikasi eksternal (seperti Laravel) dapat memicu perintah CoA ke MikroTik tanpa harus membuka akses SSH/Terminal Linux ke publik.
 
 ### Langkah 1: Install Paket Pendukung di Linux (Ubuntu/Debian)
 ```bash
@@ -93,7 +93,7 @@ npm install express
 
 Simpan file `coa_api.js` di dalam folder tersebut.
 
-### Langkah 3: Konfigurasi Keamanan API Gateway
+### Langkah 3: Konfigurasi Keamanan & Reverse Proxy
 Edit bagian header `coa_api.js` sesuai kebutuhan server Anda:
 ```javascript
 // Konfigurasi Keamanan
@@ -101,8 +101,43 @@ const ALLOWED_IP = "IP_SERVER_LARAVEL_ANDA"; // Ganti dengan IP Laravel Anda dem
 const SECRET_TOKEN = "Ganti_Dengan_Token_Keamanan_Anda_2026";
 ```
 
+#### Opsi A: Konfigurasi Nginx sebagai Reverse Proxy
+Agar IP asli Laravel dapat lolos dari filter `ALLOWED_IP` meskipun di belakang Nginx, tambahkan aturan berikut:
+```nginx
+location /api/coa/ {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection 'upgrade';
+    proxy_set_header Host $host;
+    proxy_cache_bypass $http_upgrade;
+    
+    # Meneruskan IP asli Client ke Node.js
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+#### Opsi B: Konfigurasi Apache2 sebagai Reverse Proxy
+Aktifkan modul Apache proxy:
+```bash
+sudo a2enmod proxy proxy_http headers
+sudo systemctl restart apache2
+```
+Tambahkan di file VirtualHost Anda:
+```apache
+<VirtualHost *:80>
+    ProxyPreserveHost On
+    ProxyPass /api/coa http://127.0.0.1:3000/api/coa
+    ProxyPassReverse /api/coa http://127.0.0.1:3000/api/coa
+
+    RequestHeader set X-Forwarded-Proto expr=%{REQUEST_SCHEME}
+</VirtualHost>
+```
+
 ### Langkah 4: Jalankan Service dengan PM2
-Gunakan PM2 agar service Node.js terus berjalan di latar belakang dan berjalan otomatis saat server melakukan reboot:
+Gunakan PM2 agar service Node.js terus berjalan di latar belakang:
 ```bash
 sudo npm install -g pm2
 pm2 start coa_api.js --name "coa-gateway"
@@ -113,28 +148,40 @@ pm2 save
 
 ---
 
-## 4. Pengujian & Troubleshooting
+## 4. Pengujian & Troubleshooting via REST API
 
-### Pengujian 1: Tes Langsung dari Terminal Linux Server
-Coba putuskan koneksi user secara manual dari terminal Linux menggunakan `radclient` sebelum menembak API Node.js:
-```bash
-echo "User-Name=nama_username_mikrotik" | radclient -x -r 1 -t 3 IP_ROUTER_MIKROTIK:3799 disconnect 'SecretRadiusAnda'
-```
-* **Hasil Sukses**: Ada respon `Disconnect-ACK`.
-* **Hasil Gagal**: `Disconnect-NAK` (user tidak aktif) atau *Timeout* (koneksi diblokir firewall/port 3799 tertutup).
-
-### Pengujian 2: Tes via REST API Node.js (Postman / cURL)
-Tembak endpoint Node.js menggunakan HTTP POST:
-* **URL**: `http://IP_SERVER_LINUX:3000/api/coa/disconnect`
-* **Headers**:
-  * `Authorization`: `Bearer Ganti_Dengan_Token_Keamanan_Anda_2026`
-  * `Content-Type`: `application/json`
+### 1. Endpoint: Disconnect / Kick User
+* **URL**: `http://IP_SERVER:3000/api/coa/disconnect`
 * **JSON Body**:
   ```json
   {
-    "username": "nama_username_mikrotik",
-    "nas_ip": "IP_ROUTER_MIKROTIK",
-    "secret": "SecretRadiusAnda"
+    "username": "budi_pppoe",
+    "nas_ip": "192.168.88.1",
+    "secret": "mikrotik_coa_secret"
+  }
+  ```
+
+### 2. Endpoint: Change Speed / Rate Limit
+* **URL**: `http://IP_SERVER:3000/api/coa/rate-limit`
+* **JSON Body**:
+  ```json
+  {
+    "username": "budi_pppoe",
+    "nas_ip": "192.168.88.1",
+    "secret": "mikrotik_coa_secret",
+    "rate_limit": "5M/10M"
+  }
+  ```
+
+### 3. Endpoint: Isolate User / Address List
+* **URL**: `http://IP_SERVER:3000/api/coa/isolate`
+* **JSON Body**:
+  ```json
+  {
+    "username": "budi_pppoe",
+    "nas_ip": "192.168.88.1",
+    "secret": "mikrotik_coa_secret",
+    "address_list": "isolasi_tagihan"
   }
   ```
 

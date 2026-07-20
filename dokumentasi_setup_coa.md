@@ -1,64 +1,140 @@
-# Dokumentasi Setup & Pemecahan Masalah CoA Gateway (20 Juli 2026)
+# Dokumentasi Lengkap & API Reference CoA Gateway
 
-Dokumentasi ini merangkum proses diskusi, instalasi, dan pemecahan masalah (troubleshooting) dalam mengimplementasikan API Gateway CoA (Change of Authorization) menggunakan Node.js dan FreeRADIUS pada server Linux Ubuntu.
+Dokumentasi ini merangkum proses diskusi, instalasi, dan spesifikasi endpoint API untuk mengoperasikan CoA (Change of Authorization) secara remote menggunakan Node.js dan FreeRADIUS pada server Linux Ubuntu.
 
 ---
 
-## 📋 Ringkasan Percakapan & Solusi Masalah
+## 📋 Ringkasan Fitur
+API ini mendukung 3 tindakan utama yang dikirimkan langsung ke MikroTik secara dinamis:
+1. **Disconnect (Kick)**: Memutuskan sesi aktif pengguna.
+2. **Rate Limit (Ganti Kecepatan)**: Merubah bandwidth secara live tanpa memutus koneksi.
+3. **Isolate (Address List)**: Memasukkan IP pengguna ke firewall address-list untuk isolasi (redirection).
 
-### 1. Masalah: Pengujian Lokal di Windows vs Linux
-* **Diskusi**: Kode pada [coa_api.js](file:///d:/BIG/CoA/coa_api.js) menggunakan program `radclient` bawaan Linux (`echo ... | radclient ...`).
-* **Solusi**: Ditegaskan bahwa pengujian endpoint dan eksekusi PM2 tidak bisa dilakukan di Windows secara langsung karena ketergantungan pada tool network `radclient` milik Linux. Project ini harus dideploy di server Linux (Ubuntu/Debian).
+---
 
-### 2. Masalah: Error Typo File (`radlient` vs `radclient`)
-* **Kasus**: Percobaan masuk ke file eksekusi menggunakan `cd /usr/bin/radlient` mengalami error.
-* **Solusi**:
-  * Menjelaskan bahwa nama program yang benar adalah `radclient` (memakai huruf **c**).
-  * Menjelaskan bahwa `radclient` merupakan file binary/eksekusi, sehingga perintah `cd` (Change Directory) tidak dapat digunakan. Gunakan perintah `which radclient` untuk cek lokasi atau `radclient -h` untuk melihat dokumentasi instruksinya.
+## 🔐 Keamanan & Reverse Proxy (Nginx / Apache)
+API ini sudah dilengkapi dengan pengaturan `app.set('trust proxy', true)`. Agar IP Laravel Anda dapat dideteksi dengan benar untuk validasi keamanan (`ALLOWED_IP`), silakan konfigurasikan web server Anda sebagai reverse proxy dengan aturan berikut:
 
-### 3. Masalah: Error Hak Akses `EACCES` saat install PM2
-* **Kasus**: Menjalankan `npm install -g pm2` menghasilkan error permission denied.
-* **Solusi**: Karena instalasi bersifat global (`-g`), NPM memerlukan hak akses administrator/root di Linux. Solusinya adalah menambahkan perintah `sudo`:
-  ```bash
-  sudo npm install -g pm2
+### A. Konfigurasi Nginx
+Tambahkan konfigurasi berikut pada blok server Nginx Anda (misal di `/etc/nginx/sites-available/default`):
+```nginx
+location /api/coa/ {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection 'upgrade';
+    proxy_set_header Host $host;
+    proxy_cache_bypass $http_upgrade;
+    
+    # Meneruskan IP asli Client ke Node.js
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+### B. Konfigurasi Apache2
+Aktifkan modul proxy terlebih dahulu:
+```bash
+sudo a2enmod proxy proxy_http headers
+sudo systemctl restart apache2
+```
+Kemudian tambahkan konfigurasi berikut pada file VirtualHost Apache Anda:
+```apache
+<VirtualHost *:80>
+    # ... konfigurasi domain Anda ...
+
+    ProxyPreserveHost On
+    ProxyPass /api/coa http://127.0.0.1:3000/api/coa
+    ProxyPassReverse /api/coa http://127.0.0.1:3000/api/coa
+
+    # Meneruskan header IP asli ke Node.js
+    RequestHeader set X-Forwarded-Proto expr=%{REQUEST_SCHEME}
+</VirtualHost>
+```
+
+---
+
+## 🚀 API Reference (Endpoints)
+
+### 1. Disconnect / Kick User
+Memaksa pengguna keluar (*logout*) dari jaringannya saat ini.
+* **Endpoint**: `POST /api/coa/disconnect`
+* **Payload (JSON)**:
+  ```json
+  {
+    "username": "budi_pppoe",
+    "nas_ip": "192.168.88.1",
+    "secret": "mikrotik_coa_secret"
+  }
+  ```
+* **Response Sukses (200 OK)**:
+  ```json
+  {
+    "status": "success",
+    "message": "Berhasil: User berhasil di-kick dari MikroTik.",
+    "log": [ ... ]
+  }
   ```
 
 ---
 
-## 🚀 Langkah Instalasi Akhir yang Berhasil Dijalankan
-
-Berikut adalah rekapitulasi perintah yang berhasil dieksekusi di server `mitraxcon@mitraxcon`:
-
-1. **Memasang Dependencies**:
-   ```bash
-   sudo apt update
-   sudo apt install -y freeradius freeradius-utils
-   ```
-2. **Inisialisasi Project di `/var/www/coa-gateway`**:
-   ```bash
-   cd /var/www/coa-gateway
-   npm install express
-   ```
-3. **Menjalankan Server API dengan PM2**:
-   ```bash
-   pm2 start coa_api.js --name "coa-gateway"
-   ```
-4. **Mengatur Autostart PM2 saat booting server**:
-   ```bash
-   sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u mitraxcon --hp /home/mitraxcon
-   pm2 save
-   ```
+### 2. Change Speed / Rate Limit
+Merubah profil kecepatan download/upload pengguna secara *real-time*.
+* **Endpoint**: `POST /api/coa/rate-limit`
+* **Payload (JSON)**:
+  ```json
+  {
+    "username": "budi_pppoe",
+    "nas_ip": "192.168.88.1",
+    "secret": "mikrotik_coa_secret",
+    "rate_limit": "5M/10M"
+  }
+  ```
+  *(Format `rate_limit`: `Upload/Download` seperti `512k/1M`, `5M/5M`, `10M/20M`)*
+* **Response Sukses (200 OK)**:
+  ```json
+  {
+    "status": "success",
+    "message": "Berhasil: Kecepatan user diubah menjadi 5M/10M.",
+    "log": [ ... ]
+  }
+  ```
 
 ---
 
-## 🔒 Konfigurasi Keamanan Tambahan (Langkah Berikutnya)
+### 3. Isolate User (Firewall Address List)
+Memasukkan IP pengguna ke dalam kelompok *Address List* tertentu di firewall MikroTik. Sangat berguna untuk pengalihan laman pembayaran (isolasi bagi penunggak tagihan).
+* **Endpoint**: `POST /api/coa/isolate`
+* **Payload (JSON)**:
+  ```json
+  {
+    "username": "budi_pppoe",
+    "nas_ip": "192.168.88.1",
+    "secret": "mikrotik_coa_secret",
+    "address_list": "isolasi_tagihan"
+  }
+  ```
+* **Response Sukses (200 OK)**:
+  ```json
+  {
+    "status": "success",
+    "message": "Berhasil: IP User masuk ke address list 'isolasi_tagihan'.",
+    "log": [ ... ]
+  }
+  ```
 
-Sebelum sistem ini digunakan secara penuh di produksi, pastikan konfigurasi keamanan berikut disesuaikan pada file [coa_api.js](file:///d:/BIG/CoA/coa_api.js):
+---
 
-1. **Batasi IP Pengirim (`ALLOWED_IP`)**:
-   Ganti nilai `"0.0.0.0"` dengan alamat IP server aplikasi/Laravel Anda agar port API `3000` tidak bisa ditembak oleh pihak luar yang tidak dikenal.
-2. **Ganti Secret Token (`SECRET_TOKEN`)**:
-   Ganti token bawaan dengan string acak yang kuat untuk autentikasi Bearer Token.
-3. **Buka Port Firewall**:
-   * **TCP Port 3000**: Harus terbuka di Ubuntu (untuk menerima request dari Laravel).
-   * **UDP Port 3799**: Harus terbuka di MikroTik (untuk menerima sinyal CoA/Disconnect dari server Ubuntu).
+## 🛠️ Langkah Penerapan Perubahan di Server
+
+Apabila Anda melakukan perubahan kode di server, pastikan untuk memuat ulang (reload) proses PM2 agar kode baru diterapkan:
+
+```bash
+# Masuk ke folder project
+cd /var/www/coa-gateway
+
+# Upload atau update coa_api.js di server, lalu restart proses PM2
+pm2 restart coa-gateway
+```
+*(Daftar proses PM2 dapat dipantau menggunakan perintah `pm2 status` atau `pm2 logs`)*
