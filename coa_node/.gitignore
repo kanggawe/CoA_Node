@@ -1,6 +1,5 @@
 # Dependency directories
 node_modules/
-./coa_node/node_modules/
 jspm_packages/
 
 # Logs
