@@ -1,0 +1,8 @@
+.env
+storage/logs/*.log
+storage/cache/*
+storage/idempotency/*
+vendor/
+.phpunit.cache
+*.tmp
+.DS_Store

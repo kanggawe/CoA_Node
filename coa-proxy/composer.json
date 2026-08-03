@@ -1,0 +1,27 @@
+{
+    "name": "ispprovider/coa-proxy",
+    "description": "Standalone FreeRADIUS CoA Proxy API for ISP Billing System",
+    "type": "project",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "CoaProxy\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "CoaProxy\\Tests\\": "tests/"
+        }
+    },
+    "require": {
+        "php": ">=8.3.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.5"
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "preferred-install": "dist",
+        "sort-packages": true
+    }
+}
